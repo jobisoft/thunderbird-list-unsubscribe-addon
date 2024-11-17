@@ -1,11 +1,50 @@
+// wait for theme detection as to not flash the default theme
+const theme = await browser.theme.getCurrent()
+document.documentElement.classList.add(`theme-${theme.properties.color_scheme}`)
+
 browser.tabs.query({
 	active: true,
 	currentWindow: true,
 }).then(handleActiveTabs)
 
+let shouldAutoclose = false
+async function autoclose() {
+	if (!shouldAutoclose) {
+		return
+	}
+
+	const info = await browser.windows.getCurrent()
+	 browser.windows.remove(info.id)
+}
+
+async function askForMessage() {
+	try {
+		const response = await browser.runtime.sendMessage({action: 'getSelectedMessage'})
+		await handleMessage(response.message)
+	} catch (e) {
+		console.warn(e)
+	}
+}
+
 async function handleActiveTabs(tabs) {
-	let message = await browser.messageDisplay.getDisplayedMessage(tabs[0].id);
-	let fullMessage = await browser.messages.getFull(message.id);
+	if (tabs[0].type !== 'mail') {
+		shouldAutoclose = true
+		await askForMessage()
+
+		return
+	}
+
+	const message = await browser.messageDisplay.getDisplayedMessage(tabs[0].id)
+
+	if (!message) {
+		return
+	}
+
+	await handleMessage(message)
+}
+
+async function handleMessage(message) {
+	let fullMessage = await browser.messages.getFull(message.id)
 
 	const headers = fullMessage.headers
 	const messageEl = document.getElementById('message')
@@ -75,10 +114,6 @@ async function handleActiveTabs(tabs) {
 		unsubCommand = headers['list-unsubscribe-post'][0]
 	}
 
-	console.log('unsub link: ', unsubLink)
-	console.log('unsub email: ', unsubEmail)
-	console.log('unsub command: ', unsubCommand)
-
 	messageEl.innerText = browser.i18n.getMessage('unsubConfirmPrompt')
 	if (unsubLink !== null) {
 		const linkContainerEl = document.getElementById('unsub-link-container')
@@ -124,10 +159,11 @@ async function handleActiveTabs(tabs) {
 
 		const button = document.createElement('button')
 		button.innerText = browser.i18n.getMessage('confirmOpenLink')
-		button.addEventListener('click', () => {
+		button.addEventListener('click', async () => {
 			browser.tabs.create({
 				url: unsubLink.toString(),
 			})
+			await autoclose()
 		})
 		actionContainerEl.appendChild(button)
 	}
@@ -162,6 +198,7 @@ async function handleActiveTabs(tabs) {
 				subject: unsubEmailSubject ?? 'unsubscribe',
 				identityId,
 			})
+			await autoclose()
 		})
 		actionContainerEl.appendChild(button)
 	}
